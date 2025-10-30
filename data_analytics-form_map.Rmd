@@ -1,0 +1,136 @@
+---
+title: "Parking Survey Map"
+author: "C.S. Stratton"
+date: '`r Sys.Date()`'
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    toc_depth: 3
+  base_font:
+        google: "Arial"
+---
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 16px;
+      text-align: justified;
+}
+
+
+h1 { /* Header 1 */
+  font-size: 42px;
+  color: darkblue;
+  text-decoration: underline;
+  }
+
+h2 { /* Header 2 */
+  font-size: 30px;
+  color: orangered;
+  }
+
+
+h3 { /* Header 2 */
+  font-size: 24px;
+  color: Black;
+  }
+  
+</style>
+---
+
+```{r setup, include=FALSE}
+
+#library("rJavaEnv")
+#library("devtools")
+#java_quick_install()
+#devtools::install_github("ifellows/ROSM/OpenStreetMap")
+library(OpenStreetMap)
+library(leaflet.extras)
+library(htmlwidgets)
+library(leaflet.providers)
+library(RColorBrewer)
+library(htmltools)
+
+pacman::p_load("ggspatial","leaflet","raster","sf","terra","terrainr","tidyterra","tidyverse")
+
+data_park <- read.csv("Parking Survey Forms.csv") %>%
+  filter(lat != "N/A")
+
+data_park$posix_arrival <- as.POSIXlt(data_park$arrival, format = "%H:%M:%S")
+#data_park$arrival <- as_hms(data_park$arrival)
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+[Forms Link](https://docs.google.com/forms/d/e/1FAIpQLSeqHhqVrS1ECKXa7zyIGkd9hqGeu2wpogQmGwNHUmYtBdmRZw/viewform?usp=sharing&ouid=113954816084229181243)
+
+```{r data manipulation}
+data_park_grouped <- data_park %>%
+  group_by(park_lot) %>%
+  summarise(park_lot = first(park_lot),
+            n = n(),
+            arrival = mean.POSIXlt(posix_arrival),
+            mood = mean(mood),
+            candy_corn = mean(candy_corn),
+            lat = first(lat),
+            long = first(long),
+            ssc_lat = first(ssc_lat),
+            ssc_long = first(ssc_long))
+
+park_points <- data_park_grouped %>%
+  st_as_sf(coords = c("long", "lat"), crs = 4326)
+  
+ssc_points <- data_park_grouped %>%
+  st_as_sf(coords = c("ssc_long", "ssc_lat"), crs = 4326)
+
+ssc_point <- data_park_grouped %>%
+  slice(1) %>%
+  mutate(location = "SSC") %>% 
+  select(location, ssc_long, ssc_lat) %>%
+  st_as_sf(coords = c("ssc_long", "ssc_lat"), crs = 4326)
+
+park_points$distance <- (st_distance(park_points, ssc_points, by_element = TRUE))
+
+park_points$distance <- as.numeric(park_points$distance)
+
+palette1 <- colorNumeric(palette = "viridis", domain = park_points$distance)
+palette2 <- colorNumeric(palette = "PRGn", domain = park_points$distance)
+palette3 <- colorNumeric(palette = colorRamp(c("orange", "purple")), domain = park_points$distance)
+```
+
+```{r leaflet map}
+
+#Build leaflet map
+leaflet() %>%
+  addTiles(group = "OpenStreetMap") %>%
+  addProviderTiles(providers$Esri.WorldStreetMap, group = "Esri Street Map") %>%
+  addProviderTiles(providers$OpenStreetMap, group = "Open Street Map") %>%
+  addProviderTiles(providers$Esri.WorldImagery, group = "Satellite") %>%
+
+    addCircleMarkers(data = park_points,
+                   radius = park_points$n*3,
+                   color = ~palette3(distance),
+                   label = ~paste("Parking Lot", park_lot, arrival),
+                   group = "parking lots") %>%
+  
+  addCircleMarkers(data = ssc_point,
+                   radius = 5,
+                   color = "blue",
+                   label = ~paste(location),
+                   group = "SSC") %>%
+  
+  addLayersControl(
+    baseGroups = c( "Satellite", "Esri Street Map", "OpenStreetMap"),
+    overlayGroups = c("parking lots"),
+    options = layersControlOptions(collapsed = FALSE)) %>%
+  addScaleBar()
+
+```
+
+```{r table}
+ggplot(data = data_park, aes(x = candy_corn, y = mood)) +
+       geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue")
+
+```
+
